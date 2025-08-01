@@ -1,21 +1,44 @@
-import random
-from fastapi import FastAPI, Depends, HTTPException
-from pydantic import BaseModel
-import sqlite3
-import os
 import requests
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import os
+import sqlite3
+import random
 import time
-import datetime
+import threading
+import datetime as dt
+from typing import Tuple, List
+from contextlib import asynccontextmanager
+import uvicorn
+
+def update_data():
+    while True:
+        if carSet:
+            vins = [car.vin for car in carSet] if carSet else [0]
+            sample_data = Data(
+                vin = random.choice(vins),
+                gps=(random.uniform(-90, 90), random.uniform(-180, 180)),
+                speed=random.randint(0, 120),
+                engine=random.choice(["On", "Off", "Idle"]),
+                fuel=random.randint(0, 100),
+                odometer=random.randint(1000, 200000),
+                diagnostic_codes=random.randint(0,10),
+                timestamp=dt.datetime.now()
+            )
+            try:
+                requests.post("http://127.0.0.1:8000/data/update", json=sample_data.model_dump())
+            except Exception as e:
+                print("Data update failed:", e)
+        time.sleep(1)
+
+class BackgroundTasks(threading.Thread):
+    def run(self,*args,**kwargs):
+        while True:
+            update_data()
+            time.sleep(30)
+
 
 app = FastAPI()
-
-'''
-VIN (Vehicle Identification Number) - unique identifier
-Manufacturer and Model
-Fleet ID (vehicles can belong to different fleets like "Corporate", "Rental", "Personal")
-Owner/Operator information
-Registration status (Active, Maintenance, Decommissioned)
-'''
 
 class Car(BaseModel):
     vin: int
@@ -25,25 +48,15 @@ class Car(BaseModel):
     owner: str
     registration: str
 
-'''
-GPS coordinates (latitude, longitude)
-Speed (current speed in km/h)
-Engine status (On/Off/Idle)
-Fuel/Battery level (percentage)
-Odometer reading (total kilometers)
-Diagnostic codes (if any errors)
-Timestamp of the reading
-'''
-
 class Data(BaseModel):
-    car: Car
-    gps: tuple
+    vin: int
+    gps: Tuple[float, float]
     speed: int
     engine: str
     fuel: int
     odometer: int
-    diagonstic_codes: int
-    timestamp: datetime
+    diagnostic_codes: str
+    timestamp: dt.datetime
 
 def init_db():
     if not os.path.exists("cars.db"):
@@ -56,7 +69,7 @@ def init_db():
                 model TEXT NOT NULL,
                 fleetID TEXT NOT NULL CHECK(fleetID in ('Corporate','Rental','Personal')),
                 owner TEXT NOT NULL,
-                registration TEXT NOT NULL CHECK(registration in ('Active','Maintenance','Decommissioned')
+                registration TEXT NOT NULL CHECK(registration in ('Active','Maintenance','Decommissioned'))
             )
         ''')
         conn.commit()
@@ -64,80 +77,58 @@ def init_db():
 
 init_db()
 
-def get_db():
-    conn = sqlite3.connect("cars.db", check_same_thread = False)
-    try:
-        yield conn
-    finally:
-        conn.close()
-
-carSet = []
+carSet: List[Car] = []
+data_log: List[Data] = []
 
 @app.post("/vehiclemanagement/create")
-def create_user(car: Car):
+def create_car(car: Car):
     carSet.append(car)
     return car
 
-@app.get('/vehiclemanagement/list')
-def list_users():
+@app.get("/vehiclemanagement/list")
+def list_cars():
     return list(carSet)
 
-@app.post('/vehiclemanagement/delete')
-def delete(vin: int):
+@app.post("/vehiclemanagement/delete")
+def delete_car(vin: int):
     for car in carSet:
         if car.vin == vin:
             carSet.remove(car)
-            return {"message": "Deleted car succesfully"}
-    return {"message": "Failed"}
+            return {"message": "Deleted car successfully"}
+    return {"message": "VIN not found"}
 
-@app.get('/vehiclemanagement/query')
-def query(vin: int = -1, manufacturer: str = 'None', model: str = 'None', fleetID: str = 'None', owner: str = "None", registration: str='None'):
+@app.get("/vehiclemanagement/query")
+def query_cars(
+    vin: int = -1,
+    manufacturer: str = 'None',
+    model: str = 'None',
+    fleetID: str = 'None',
+    owner: str = "None",
+    registration: str = 'None'
+):
     result = []
     for car in carSet:
         if all([
-            (vin == -1 or car.vin == vin), (manufacturer == 'None' or manufacturer == car.manufacturer),
-            (model == 'None' or car.model == model), (fleetID == 'None' or fleetID == car.fleetID),
-            (owner == "None" or car.owner == owner), (registration == 'None' or registration == car.registration)
-            ]): 
+            (vin == -1 or car.vin == vin),
+            (manufacturer == 'None' or car.manufacturer == manufacturer),
+            (model == 'None' or car.model == model),
+            (fleetID == 'None' or car.fleetID == fleetID),
+            (owner == "None" or car.owner == owner),
+            (registration == 'None' or car.registration == registration)
+        ]):
             result.append(car)
     return result
-'''
-GPS coordinates (latitude, longitude)
-Speed (current speed in km/h)
-Engine status (On/Off/Idle)
-Fuel/Battery level (percentage)
-Odometer reading (total kilometers)
-Diagnostic codes (if any errors)
-Timestamp of the reading
-'''
-
-def update_data():
-    data = {
-        "car": random.choice(carSet),
-        "gps": (random.randint(1,10), random.randint(1, 10)),
-        "speed": random.randint(40, 100),
-        "engine": random.choice(['On', 'Off', 'Idle']),
-        "fuel": random.randint(0, 100),
-        "odometer": random.randint(0, 100),
-        "diagnostic_codes": None,
-        "timestamp": datetime.now()
-        }
-    url = "http://127.0.0.1:8000/data/update"
-    response = requests.post(url, data)
-    if response.status_code == 200:
-        print("POST request successful:")
-        print(response.json())
-    else:
-        print(f"POST request failed with status code: {response.status_code}")
-
-data_log = []
 
 @app.post("/data/update")
-def update_telementary_data(data: Data):
+def update_telematics_data(data: Data):
     data_log.append(data)
     return data
 
-while True:
-    time.sleep(30)
-    update_data()
+@app.get("/data/log")
+def get_data_log():
+    return data_log
 
+if __name__ == '__main__':
+    t = BackgroundTasks()
+    t.start()
+    uvicorn.run(app, host="0.0.0.0", port=8000)
