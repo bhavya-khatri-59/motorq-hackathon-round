@@ -102,6 +102,7 @@ def query(vin: int = -1, manufacturer: str = 'None', model: str = 'None', fleetI
 
 
 
+
 def update_data():
 
     pass
