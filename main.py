@@ -5,6 +5,7 @@ import sqlite3
 import os
 import requests
 import time
+import datetime
 
 app = FastAPI()
 
@@ -35,13 +36,14 @@ Timestamp of the reading
 '''
 
 class Data(BaseModel):
-    vin: int
+    car: Car
     gps: tuple
     speed: int
     engine: str
     fuel: int
     odometer: int
     diagonstic_codes: int
+    timestamp: datetime
 
 def init_db():
     if not os.path.exists("cars.db"):
@@ -99,16 +101,43 @@ def query(vin: int = -1, manufacturer: str = 'None', model: str = 'None', fleetI
             ]): 
             result.append(car)
     return result
-
-
-
+'''
+GPS coordinates (latitude, longitude)
+Speed (current speed in km/h)
+Engine status (On/Off/Idle)
+Fuel/Battery level (percentage)
+Odometer reading (total kilometers)
+Diagnostic codes (if any errors)
+Timestamp of the reading
+'''
 
 def update_data():
+    data = {
+        "car": random.choice(carSet),
+        "gps": (random.randint(1,10), random.randint(1, 10)),
+        "speed": random.randint(40, 100),
+        "engine": random.choice(['On', 'Off', 'Idle']),
+        "fuel": random.randint(0, 100),
+        "odometer": random.randint(0, 100),
+        "diagnostic_codes": None,
+        "timestamp": datetime.now()
+        }
+    url = "http://127.0.0.1:8000/data/update"
+    response = requests.post(url, data)
+    if response.status_code == 200:
+        print("POST request successful:")
+        print(response.json())
+    else:
+        print(f"POST request failed with status code: {response.status_code}")
 
-    pass
-'''
+data_log = []
+
+@app.post("/data/update")
+def update_telementary_data(data: Data):
+    data_log.append(data)
+    return data
+
 while True:
     time.sleep(30)
     update_data()
-'''
 
