@@ -26,6 +26,12 @@ class Data(BaseModel):
     diagnostic_codes: Optional[str]
     timestamp: str
 
+class Alert(BaseModel):
+    vin: int
+    type: str
+    severity: str
+    timestamp: str
+
 carSet = []
 data_log = []
 alerts = []
@@ -42,19 +48,21 @@ async def lifespan(app: FastAPI):
                 vin=car.vin,
                 gps_lat=random.uniform(-90, 90),
                 gps_lon=random.uniform(-180, 180),
-                speed=random.randint(0, 120),
+                speed=random.randint(0, 160),
                 engine=random.choice(['On', 'Off', 'Idle']),
                 fuel=random.randint(0, 100),
                 odometer=random.randint(1000, 100000),
                 diagnostic_codes=None,
                 timestamp=datetime.datetime.now().isoformat()
             )
-            if mock_data.speed >= 80:
-                alerts.append((mock_data.vin, "speed", mock_data.timestamp))
-            if mock_data.fuel <= 15:
-                alerts.append((mock_data.vin, "low fuel", mock_data.timestamp))
             data_log.append(mock_data)
-            print(f"[Telemetry] Logged for VIN: {car.vin}")
+
+            if mock_data.speed > 100:
+                alerts.append(Alert(vin=car.vin, type="Speed Violation", severity="High", timestamp=mock_data.timestamp))
+            if mock_data.fuel < 15:
+                alerts.append(Alert(vin=car.vin, type="Low Fuel", severity="Medium", timestamp=mock_data.timestamp))
+
+            print(f"Logged for VIN: {car.vin}")
             time.sleep(30)
 
     thread = threading.Thread(target=update_data, daemon=True)
@@ -107,6 +115,29 @@ def query_vehicle(
 def get_telematics_log():
     return data_log[-20:]
 
-@app.get("/alert")
+@app.get("/alerts")
 def get_alerts():
-    return alerts
+    return alerts[-20:]
+
+@app.get("/analytics")
+def get_analytics():
+    now = datetime.datetime.now()
+    twenty_four_hours_ago = now - datetime.timedelta(hours=24)
+    active_vins = {data.vin for data in data_log if datetime.datetime.fromisoformat(data.timestamp) > twenty_four_hours_ago}
+    active_count = len(active_vins)
+    inactive_count = len(carSet) - active_count
+    recent_data = [d for d in data_log if datetime.datetime.fromisoformat(d.timestamp) > twenty_four_hours_ago]
+    avg_fuel = sum(d.fuel for d in recent_data) / len(recent_data) if recent_data else 0
+    total_distance = sum(d.odometer for d in recent_data)
+    alert_summary = {}
+    for a in alerts:
+        key = f"{a.type}_{a.severity}"
+        alert_summary[key] = alert_summary.get(key, 0) + 1
+
+    return {
+        "active_vehicles": active_count,
+        "inactive_vehicles": inactive_count,
+        "avg_fuel_level": round(avg_fuel, 2),
+        "total_distance_traveled": total_distance,
+        "alert_summary": alert_summary
+    }
